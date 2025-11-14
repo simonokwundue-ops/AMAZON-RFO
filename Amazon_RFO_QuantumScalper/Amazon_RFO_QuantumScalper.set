@@ -1,14 +1,14 @@
 ; Amazon RFO Quantum Scalper - Preset Configuration File
-; Optimized settings for aggressive scalping on M1/M5/M15
+; Optimized settings for conservative scalping on M1/M5/M15
 
 ; === Basic Risk Settings ===
-Inp_BaseRisk=1.00
-Inp_MaxRisk=5.00
+Inp_BaseRisk=0.50
+Inp_MaxRisk=3.00
 Inp_Magic=789456
 
 ; === Quantum Scalper Settings ===
 Inp_QuantumAnalyses=5
-Inp_MaxPositions=5
+Inp_MaxPositions=3
 Inp_MinTPPips=5.00
 Inp_MaxTPPips=30.00
 Inp_MinSLPips=3.00

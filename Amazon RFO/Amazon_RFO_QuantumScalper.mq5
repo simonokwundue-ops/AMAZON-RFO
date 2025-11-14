@@ -11,11 +11,11 @@
 #property description "Self-optimizing system with persistent memory"
 #property description "Different strategies for different market regimes"
 
-#include "PersistentMemory.mqh"
-#include "MarketRegime.mqh"
-#include "PositionManager.mqh"
-#include "PerformanceTracker.mqh"
-#include "QuantumScalper_Core.mqh"
+#include "Include/PersistentMemory.mqh"
+#include "Include/MarketRegime.mqh"
+#include "Include/PositionManager.mqh"
+#include "Include/PerformanceTracker.mqh"
+#include "Include/QuantumScalper_Core.mqh"
 
 //+------------------------------------------------------------------+
 //| Input Parameters                                                  |
@@ -23,14 +23,14 @@
 
 // === BASIC SETTINGS ===
 input group "=== Basic Risk Settings ==="
-input double   Inp_BaseRisk          = 1.0;      // Base Risk per Position (%)
-input double   Inp_MaxRisk           = 5.0;      // Maximum Total Risk (%)
+input double   Inp_BaseRisk          = 0.5;      // Base Risk per Position (%)
+input double   Inp_MaxRisk           = 3.0;      // Maximum Total Risk (%)
 input int      Inp_Magic             = 789456;   // Magic Number
 
 // === QUANTUM SCALPER SETTINGS ===
 input group "=== Quantum Scalper Settings ==="
 input int      Inp_QuantumAnalyses   = 5;        // Number of Quantum Analyses per Tick
-input int      Inp_MaxPositions      = 5;        // Maximum Simultaneous Positions
+input int      Inp_MaxPositions      = 3;        // Maximum Simultaneous Positions
 input double   Inp_MinTPPips         = 5.0;      // Minimum TP (pips)
 input double   Inp_MaxTPPips         = 30.0;     // Maximum TP (pips)
 input double   Inp_MinSLPips         = 3.0;      // Minimum SL (pips)
@@ -226,6 +226,15 @@ void OnTick()
    AdaptiveParameters adaptParams;
    g_memory.GetParameters(adaptParams);
    
+   // Determine trade direction first (needed for margin calculation)
+   int tradeType = -1;
+   if(consensusSignal > 0)
+      tradeType = ORDER_TYPE_BUY;
+   else if(consensusSignal < 0)
+      tradeType = ORDER_TYPE_SELL;
+   
+   if(tradeType < 0) return; // No valid signal
+   
    // Calculate final TP/SL
    double volatility = analyses[0].volatility; // Use first analysis volatility
    double tpPips, slPips;
@@ -234,12 +243,31 @@ void OnTick()
                                     regimeSLMult * adaptParams.slMultiplier,
                                     tpPips, slPips);
    
-   // Calculate lot size
+   // Calculate lot size with margin awareness
    double riskPct = Inp_BaseRisk * adaptParams.riskLevel * riskReduction;
-   riskPct = MathMin(riskPct, Inp_MaxRisk / Inp_MaxPositions); // Limit per position
+   
+   // Get current open positions count
+   int openPositions = g_posManager.GetPositionCount();
+   
+   // Adjust risk based on open positions to prevent margin exhaustion
+   if(openPositions > 0)
+   {
+      // Reduce risk per position as more positions open
+      double positionFactor = 1.0 / (1.0 + openPositions * 0.3);
+      riskPct *= positionFactor;
+   }
+   
+   // Absolute limit per position considering max positions
+   double maxRiskPerPos = Inp_MaxRisk / MathMax(Inp_MaxPositions, 3);
+   riskPct = MathMin(riskPct, maxRiskPerPos);
    
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskAmount = balance * riskPct / 100.0;
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+   
+   // Use equity instead of balance for more realistic risk calculation
+   double riskAmount = equity * riskPct / 100.0;
+   
    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
@@ -247,6 +275,7 @@ void OnTick()
    double lots = 0;
    if(tickValue > 0 && tickSize > 0 && point > 0 && slPips > 0)
    {
+      // Calculate lots based on risk
       lots = riskAmount / (slPips * 10 * point * tickValue / tickSize);
       lots *= adaptParams.lotMultiplier;
       
@@ -254,24 +283,43 @@ void OnTick()
       double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
       double stepLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
       
+      // Check margin requirement for this lot size
+      double price = (tradeType == ORDER_TYPE_BUY) ? 
+                     SymbolInfoDouble(_Symbol, SYMBOL_ASK) : 
+                     SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      
+      double marginRequired = 0;
+      if(OrderCalcMargin(tradeType == ORDER_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+                        _Symbol, lots, price, marginRequired))
+      {
+         // Ensure we have enough free margin (keep 30% buffer)
+         double maxAffordable = freeMargin * 0.7;
+         if(marginRequired > maxAffordable && maxAffordable > 0)
+         {
+            // Reduce lot size to fit available margin
+            lots = lots * (maxAffordable / marginRequired);
+         }
+      }
+      
       if(stepLot > 0)
          lots = MathFloor(lots / stepLot) * stepLot;
       
       lots = MathMax(minLot, MathMin(maxLot, lots));
+      
+      // Final margin check
+      if(OrderCalcMargin(tradeType == ORDER_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+                        _Symbol, lots, price, marginRequired))
+      {
+         if(marginRequired > freeMargin * 0.8) // Don't use more than 80% of free margin
+         {
+            lots = minLot; // Fallback to minimum
+         }
+      }
    }
    else
    {
       lots = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    }
-   
-   // Determine trade direction
-   int tradeType = -1;
-   if(consensusSignal > 0)
-      tradeType = ORDER_TYPE_BUY;
-   else if(consensusSignal < 0)
-      tradeType = ORDER_TYPE_SELL;
-   
-   if(tradeType < 0) return;
    
    // === OPEN POSITION ===
    string comment = StringFormat("QS_%s_C%.2f", 

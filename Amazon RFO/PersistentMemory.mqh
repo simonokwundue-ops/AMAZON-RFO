@@ -84,10 +84,10 @@ public:
       
       m_params.tpMultiplier = 1.5;
       m_params.slMultiplier = 1.0;
-      m_params.lotMultiplier = 1.0;
-      m_params.aggressiveness = 0.5;
-      m_params.riskLevel = 0.5;
-      m_params.maxSimultaneous = 5;
+      m_params.lotMultiplier = 0.5; // Start conservative
+      m_params.aggressiveness = 0.3; // More conservative
+      m_params.riskLevel = 0.4; // Reduced risk level
+      m_params.maxSimultaneous = 3; // Fewer positions to start
       m_params.lastOptimization = 0;
       
       m_regime.currentRegime = 0;
