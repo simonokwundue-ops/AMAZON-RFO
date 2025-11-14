@@ -530,4 +530,49 @@ Original article: https://www.mql5.com/ru/articles/17063
 Attached files | Download ZIP
 RFO.zip (161.58 KB)
 
-the project in this repo is focused on acheiving the fullest potential of the RFO algorythm in an EA targetting to acheive a scalping strategy of M5 - M15 timeframe tapid scalping system not focused on precision but recorvery after every loss.. Different analysis strategies for different market regim, precised awareness of market regime and very robust hedging and recorvery strategies to acheive a great amount of success after every trading section. The article provided great solutions but I need your help hernessing those potentials. Creat a good doccument and file analysis plan for all repo files and then create a detailed implimentation plan that would lead to one future scalper variant that solves the scalper version mystry.. After we acheive the scalper version, we can move to another variant.. This variant would open multipple micro positions at a time with the closest possible tp/sl distances to be sure they open and close as fast as possible and a dropdown result after every 20 positions for EA to self optimize and improve over usage time.. A persistent memory that does not reset on EA change or terminal restart.. A self optimizing system.. After you create, the project directory would be manually copied and pasted here C:\Users\User\AppData\Roaming\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075\MQL5\Experts by me.. 
+## Amazon RFO Project - Quantum Scalper
+
+The project in this repo is focused on achieving the fullest potential of the RFO algorithm in an EA targeting to achieve a scalping strategy for M1/M5/M15 timeframe rapid scalping system not focused on precision but **recovery after every loss**. Different analysis strategies for different market regimes, precise awareness of market regime and very robust hedging and recovery strategies to achieve a great amount of success after every trading session.
+
+### ✨ NEW: Amazon RFO Quantum Scalper
+
+We have successfully implemented the **Quantum Scalper** variant that solves the scalping system requirements:
+
+#### Key Features:
+- **Quantum-Style Analysis**: Multiple rapid analyses per tick (5 by default) with consensus-based decisions
+- **Multi-Position System**: Opens multiple micro-positions simultaneously (up to 5-10)
+- **Dynamic TP/SL**: Closest possible TP/SL distances based on volatility (5-30 pips TP, 3-20 pips SL)
+- **Self-Optimization**: Automatically optimizes parameters every 20 trades using RFO algorithm
+- **Persistent Memory**: Survives EA changes, terminal restarts, and computer reboots
+- **Market Regime Detection**: Adapts strategies for Ranging, Trending, and Volatile markets
+- **Recovery System**: Reduces risk and increases TP after consecutive losses
+- **Hedging**: Activates hedging during severe drawdowns
+- **Performance Tracking**: Tracks all metrics with detailed logging
+
+#### Files Included:
+Located in `Amazon RFO/` directory:
+- `Amazon_RFO_QuantumScalper.mq5` - Main EA file
+- `QuantumScalper_Core.mqh` - Quantum analysis engine
+- `PersistentMemory.mqh` - Persistent memory system
+- `MarketRegime.mqh` - Market regime detection
+- `PositionManager.mqh` - Multi-position management
+- `PerformanceTracker.mqh` - Performance tracking & self-optimization
+- `RFO_Core.mqh` - RFO algorithm implementation
+- `Amazon_RFO_QuantumScalper.ini` - Configuration file
+- `Amazon_RFO_QuantumScalper.set` - Preset settings
+- `QUANTUM_SCALPER_DOCUMENTATION.md` - Complete documentation
+- `README_QUANTUM_SCALPER.md` - Quick start guide
+
+#### Installation:
+Copy the entire `Amazon RFO` directory to:
+```
+C:\Users\User\AppData\Roaming\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075\MQL5\Experts\
+```
+
+See `Amazon RFO/README_QUANTUM_SCALPER.md` for detailed installation and usage instructions.
+
+---
+
+## Original RFO Algorithm Documentation
+
+The following content describes the Royal Flush Optimization (RFO) algorithm that powers the trading system: 
