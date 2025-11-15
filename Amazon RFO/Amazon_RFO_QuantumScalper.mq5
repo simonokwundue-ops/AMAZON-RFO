@@ -119,8 +119,8 @@ int OnInit()
    
    // Initialize signal grid
    g_signalGrid = new CSignalGrid();
-   g_signalGrid.SetThreshold(Inp_SignalThreshold);
-   g_signalGrid.SetMaxSignals(Inp_MaxSignalsPerTick);
+   g_signalGrid.SetMinScore(Inp_SignalThreshold);
+   g_signalGrid.SetMaxSignalsPerTick(Inp_MaxSignalsPerTick);
    
    // Register strategies
    if(Inp_UseMABreakout)
@@ -191,7 +191,7 @@ int OnInit()
    
    // Display initialization info
    PerformanceMetrics metrics;
-   g_memory.GetMetrics(metrics);
+   g_memory.GetPerformance(metrics);
    
    Print("╔════════════════════════════════════════════════════════════════╗");
    Print("║        AMAZON RFO QUANTUM SCALPER V2 - INITIALIZED            ║");
@@ -202,7 +202,7 @@ int OnInit()
          " (Activate: ", Inp_TrailActivation, "%, Buffer: ", Inp_TrailBuffer, "%)");
    Print("║ Self-Optimization: ", (Inp_SelfOptimize ? "ENABLED" : "DISABLED"));
    Print("║ Trades: ", metrics.totalTrades, 
-         " | WR: ", DoubleToString(metrics.winRate, 1), "%", 
+         " | WR: ", DoubleToString(metrics.winRate * 100, 1), "%", 
          " | PF: ", DoubleToString(metrics.profitFactor, 2),
          " | Profit: ", DoubleToString(metrics.totalProfit, 2));
    Print("╚════════════════════════════════════════════════════════════════╝");
@@ -291,18 +291,17 @@ void OnTick()
       g_lastRegimeUpdate = currentTime;
       g_regimeDetector.UpdateRegime();
       
-      ENUM_MARKET_REGIME regime = g_regimeDetector.GetCurrentRegime();
-      Print("♦ Regime updated: ", g_regimeDetector.GetRegimeName(regime));
+      Print("♦ Regime updated: ", g_regimeDetector.GetRegimeName());
    }
    
    // Get current regime
-   ENUM_MARKET_REGIME currentRegime = g_regimeDetector.GetCurrentRegime();
+   string currentRegime = g_regimeDetector.GetRegimeName();
    
    // Analyze all strategies and get signals
-   TradingSignal signals[];
-   g_signalGrid.AnalyzeMarket(currentRegime, signals);
+   Signal signals[];
+   int signalCount = g_signalGrid.GetSignals(signals, _Symbol, Period(), currentRegime);
    
-   if(ArraySize(signals) == 0) return; // No valid signals
+   if(signalCount == 0) return; // No valid signals
    
    // Process top signals (up to max per tick)
    int signalsToProcess = MathMin(ArraySize(signals), Inp_MaxSignalsPerTick);
@@ -312,7 +311,7 @@ void OnTick()
    {
       if(!g_posManager.CanOpenPosition()) break;
       
-      TradingSignal signal = signals[i];
+      Signal signal = signals[i];
       
       // Calculate lot size with margin awareness
       double lots = CalculateLotSize(signal.slPips);
@@ -445,12 +444,12 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             
             // Get performance summary
             PerformanceMetrics metrics;
-            g_memory.GetMetrics(metrics);
+            g_memory.GetPerformance(metrics);
             
             Print((isWin ? "✓ WIN: " : "✗ LOSS: "), 
                   DoubleToString(profit, 2), 
                   " | Trades: ", metrics.totalTrades,
-                  " | WR: ", DoubleToString(metrics.winRate, 1), "%",
+                  " | WR: ", DoubleToString(metrics.winRate * 100, 1), "%",
                   " | PF: ", DoubleToString(metrics.profitFactor, 2),
                   " | Profit: ", DoubleToString(metrics.totalProfit, 2));
          }

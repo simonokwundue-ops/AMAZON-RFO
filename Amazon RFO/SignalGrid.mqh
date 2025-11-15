@@ -134,6 +134,8 @@ public:
       return count;
    }
    
+   int GetStrategyCount() { return ArraySize(m_strategies); }
+   
 private:
    void SortSignalsByScore(Signal &signals[])
    {
