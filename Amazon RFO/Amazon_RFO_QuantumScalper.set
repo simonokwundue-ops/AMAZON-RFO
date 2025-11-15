@@ -1,0 +1,48 @@
+; Amazon RFO Quantum Scalper V2 - Preset Configuration File
+; Strategy-based scalping with intelligent trailing and recovery
+
+; === Basic Risk Settings ===
+Inp_BaseRisk=0.50
+Inp_MaxRisk=3.00
+Inp_Magic=789456
+
+; === Position Settings ===
+Inp_MaxPositions=3
+Inp_MinTPPips=5.00
+Inp_MaxTPPips=30.00
+Inp_MinSLPips=3.00
+Inp_MaxSLPips=20.00
+
+; === Trailing Stop Settings ===
+Inp_UseTrailing=1
+Inp_TrailActivation=70.00
+Inp_TrailBuffer=30.00
+Inp_MinTrailStep=3.00
+
+; === Strategy Settings ===
+Inp_UseMABreakout=1
+Inp_UseRSIDivergence=1
+Inp_UseBBFade=1
+Inp_UseMACDAccel=1
+Inp_UseSessionBreak=1
+Inp_UseCandlePattern=1
+Inp_SignalThreshold=0.65
+Inp_MaxSignalsPerTick=3
+
+; === Recovery Settings ===
+Inp_UseRecovery=1
+Inp_HedgeAtLossPips=15.00
+Inp_HedgeLotRatio=0.50
+
+; === Market Regime Settings ===
+Inp_AdaptToRegime=1
+Inp_RegimeTF=5
+
+; === Self-Optimization ===
+Inp_SelfOptimize=1
+Inp_OptimizeEvery=20
+
+; === Advanced Settings ===
+Inp_Slippage=3
+Inp_MaxSpread=3.00
+Inp_MinBarsBetween=1
