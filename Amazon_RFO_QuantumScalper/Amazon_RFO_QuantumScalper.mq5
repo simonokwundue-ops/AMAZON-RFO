@@ -289,7 +289,7 @@ void OnTick()
    if(currentTime - g_lastRegimeUpdate >= 900) // 15 minutes
    {
       g_lastRegimeUpdate = currentTime;
-      g_regimeDetector.UpdateRegime();
+      g_regimeDetector.Update();
       
       Print("♦ Regime updated: ", g_regimeDetector.GetRegimeName());
    }
@@ -332,7 +332,7 @@ void OnTick()
          
          Print("✓ Signal ", i+1, "/", ArraySize(signals), 
                " Score: ", DoubleToString(signal.score, 2),
-               " | Regime: ", g_regimeDetector.GetRegimeName(currentRegime));
+               " | Regime: ", currentRegime);
       }
    }
 }

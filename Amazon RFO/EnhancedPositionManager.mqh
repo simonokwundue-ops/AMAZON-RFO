@@ -152,12 +152,15 @@ public:
       
       for(int i = 0; i < ArraySize(m_positions); i++)
       {
-         TrailPosition(m_positions[i]);
+         TrailPosition(i);
       }
    }
    
-   void TrailPosition(EnhancedPosition &pos)
+   void TrailPosition(int posIndex)
    {
+      if(posIndex < 0 || posIndex >= ArraySize(m_positions)) return;
+      
+      EnhancedPosition pos = m_positions[posIndex];
       if(pos.tp == 0 || pos.sl == 0) return;
       
       double currentProfitPips = 0;
@@ -259,8 +262,8 @@ public:
       if(posIndex < 0 || posIndex >= ArraySize(m_positions)) return false;
       if(m_positions[posIndex].hasHedge) return false; // Already hedged
       
-      EnhancedPosition &pos = m_positions[posIndex];
-      double hedgeLots = pos.lots * hedgeLotRatio;
+      // Get position data (cannot use reference for struct in MQL5)
+      double hedgeLots = m_positions[posIndex].lots * hedgeLotRatio;
       
       // Round to valid lot size
       double minLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
@@ -271,12 +274,12 @@ public:
       bool success = false;
       ulong hedgeTicket = 0;
       
-      if(pos.type == POSITION_TYPE_BUY)
+      if(m_positions[posIndex].type == POSITION_TYPE_BUY)
       {
          double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
          double sl = NormalizeDouble(price + m_maxSLPips * m_point * 10, m_digits);
          double tp = NormalizeDouble(price - m_minTPPips * m_point * 10, m_digits);
-         success = m_trade.Sell(hedgeLots, m_symbol, price, sl, tp, "HEDGE-" + IntegerToString(pos.ticket));
+         success = m_trade.Sell(hedgeLots, m_symbol, price, sl, tp, "HEDGE-" + IntegerToString(m_positions[posIndex].ticket));
          if(success) hedgeTicket = m_trade.ResultOrder();
       }
       else
@@ -284,16 +287,16 @@ public:
          double price = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
          double sl = NormalizeDouble(price - m_maxSLPips * m_point * 10, m_digits);
          double tp = NormalizeDouble(price + m_minTPPips * m_point * 10, m_digits);
-         success = m_trade.Buy(hedgeLots, m_symbol, price, sl, tp, "HEDGE-" + IntegerToString(pos.ticket));
+         success = m_trade.Buy(hedgeLots, m_symbol, price, sl, tp, "HEDGE-" + IntegerToString(m_positions[posIndex].ticket));
          if(success) hedgeTicket = m_trade.ResultOrder();
       }
       
       if(success)
       {
-         pos.hasHedge = true;
-         pos.hedgeTicket = hedgeTicket;
-         pos.recoveryAttempts++;
-         Print("♦ Hedged position #", pos.ticket, " with hedge #", hedgeTicket);
+         m_positions[posIndex].hasHedge = true;
+         m_positions[posIndex].hedgeTicket = hedgeTicket;
+         m_positions[posIndex].recoveryAttempts++;
+         Print("♦ Hedged position #", m_positions[posIndex].ticket, " with hedge #", hedgeTicket);
       }
       
       return success;
