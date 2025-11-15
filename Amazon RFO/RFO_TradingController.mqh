@@ -6,6 +6,7 @@
 #property strict
 
 #include "RFO_DecisionGenome.mqh"
+#include "RFO_MarketAdvisor.mqh"
 
 //+------------------------------------------------------------------+
 //| RFO Trading Controller - Central decision management              |
@@ -37,6 +38,9 @@ private:
    bool m_initialized;
    bool m_firstGeneration;
    
+   // Market Advisory System
+   CRFO_MarketAdvisor* m_marketAdvisor;
+   
 public:
    CRFO_TradingController()
    {
@@ -56,6 +60,7 @@ public:
       ArrayFill(m_recentProfits, 0, m_recentCount, 0.0);
       
       m_bestGenome = new CDecisionGenome(m_deckSize);
+      m_marketAdvisor = new CRFO_MarketAdvisor(_Symbol, PERIOD_M5);
    }
    
    ~CRFO_TradingController()
@@ -75,6 +80,9 @@ public:
       
       if(CheckPointer(m_bestGenome) == POINTER_DYNAMIC)
          delete m_bestGenome;
+         
+      if(CheckPointer(m_marketAdvisor) == POINTER_DYNAMIC)
+         delete m_marketAdvisor;
    }
    
    // Initialize RFO controller
@@ -272,4 +280,97 @@ public:
    
    // Check if initialized
    bool IsInitialized() { return m_initialized; }
+   
+   //+------------------------------------------------------------------+
+   //| Market Advisor Integration Methods                                |
+   //+------------------------------------------------------------------+
+   
+   // Update market context (call every tick)
+   bool UpdateMarketContext()
+   {
+      if(m_marketAdvisor != NULL)
+         return m_marketAdvisor.UpdateMarketContext();
+      return false;
+   }
+   
+   // Get market advisor instance
+   CRFO_MarketAdvisor* GetMarketAdvisor()
+   {
+      return m_marketAdvisor;
+   }
+   
+   // Evaluate signal with RFO intelligence + Market Advisory
+   double EvaluateSignal(int strategyId, double signalScore, ENUM_MARKET_REGIME signalRegime)
+   {
+      if(m_marketAdvisor == NULL) return signalScore;
+      
+      // Get advisor's confidence adjustment
+      double advisedConfidence = m_marketAdvisor.AdviseOnSignal(strategyId, signalScore, signalRegime);
+      
+      // Apply genome strategy weight
+      double strategyWeight = m_bestGenome.GetStrategyWeight(strategyId);
+      
+      // Combined score
+      double finalScore = advisedConfidence * strategyWeight;
+      
+      return finalScore;
+   }
+   
+   // Check if signal is likely a bluff
+   bool IsSignalBluff(double signalScore, int strategyId)
+   {
+      if(m_marketAdvisor == NULL) return false;
+      
+      return m_marketAdvisor.IsSignalBluff(signalScore, strategyId);
+   }
+   
+   // Get position size adjustment from market context
+   double GetMarketAdjustedLotSize(double baseLotSize)
+   {
+      if(m_marketAdvisor == NULL) return baseLotSize;
+      
+      // Get market-based adjustment
+      double marketAdjustment = m_marketAdvisor.GetPositionSizeAdjustment();
+      
+      // Get genome-based multiplier
+      double genomeMultiplier = m_bestGenome.GetLotMultiplier();
+      
+      // Combined adjustment
+      return baseLotSize * marketAdjustment * genomeMultiplier;
+   }
+   
+   // Record strategy trade result (updates both RFO and Market Advisor)
+   void RecordStrategyTradeResult(int strategyId, bool isWin, double profit, ENUM_MARKET_REGIME regime)
+   {
+      // Record in standard RFO system
+      RecordTradeResult(profit, isWin);
+      
+      // Record in Market Advisor for strategy learning
+      if(m_marketAdvisor != NULL)
+      {
+         m_marketAdvisor.RecordStrategyTrade(strategyId, isWin, profit, regime);
+      }
+   }
+   
+   // Print comprehensive status including market advisory
+   void PrintStatus()
+   {
+      Print("═══════════════ RFO CONTROLLER STATUS ═══════════════");
+      Print("Generation: ", m_generation, " | Trades this gen: ", m_tradesThisGen, "/", m_tradesPerGeneration);
+      Print("Best Fitness: ", DoubleToString(m_bestGenome.fitness, 4));
+      Print("Best Genome Strategy Weights:");
+      Print("  MA Breakout: ", DoubleToString(m_bestGenome.GetStrategyWeight(1), 2));
+      Print("  RSI Divergence: ", DoubleToString(m_bestGenome.GetStrategyWeight(2), 2));
+      Print("  BB Fade: ", DoubleToString(m_bestGenome.GetStrategyWeight(3), 2));
+      Print("  MACD Accel: ", DoubleToString(m_bestGenome.GetStrategyWeight(4), 2));
+      Print("  Session Breakout: ", DoubleToString(m_bestGenome.GetStrategyWeight(5), 2));
+      Print("  Candle Patterns: ", DoubleToString(m_bestGenome.GetStrategyWeight(6), 2));
+      Print("══════════════════════════════════════════════════════");
+      
+      // Print Market Advisory Report
+      if(m_marketAdvisor != NULL)
+      {
+         m_marketAdvisor.PrintAdvisoryReport();
+      }
+   }
 };
