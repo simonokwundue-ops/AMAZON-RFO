@@ -1,21 +1,29 @@
 //+------------------------------------------------------------------+
 //|                                  Amazon_RFO_QuantumScalper.mq5   |
-//|                     Quantum Multi-Position Scalping System        |
+//|                  Strategy-Based Multi-Position Scalping System    |
 //|                    with Self-Optimization & Persistent Memory     |
 //+------------------------------------------------------------------+
 #property copyright "Amazon RFO Project"
 #property link      "https://github.com/simonokwundue-ops/AMAZON-RFO"
-#property version   "1.00"
+#property version   "2.00"
 #property strict
-#property description "Quantum-style rapid scalping with multiple micro-positions"
+#property description "6-Strategy signal grid scalping with RFO optimization"
 #property description "Self-optimizing system with persistent memory"
-#property description "Different strategies for different market regimes"
+#property description "Intelligent per-position trailing and recovery"
 
 #include "Include/PersistentMemory.mqh"
-#include "Include/MarketRegime.mqh"
-#include "Include/PositionManager.mqh"
+#include "Include/RegimeDetector.mqh"
+#include "Include/SignalGrid.mqh"
+#include "Include/EnhancedPositionManager.mqh"
 #include "Include/PerformanceTracker.mqh"
-#include "Include/QuantumScalper_Core.mqh"
+
+// Import all strategies
+#include "Include/MABreakoutStrategy.mqh"
+#include "Include/RSIDivergenceStrategy.mqh"
+#include "Include/BBFadeStrategy.mqh"
+#include "Include/MACDAccelerationStrategy.mqh"
+#include "Include/SessionBreakoutStrategy.mqh"
+#include "Include/CandlePatternStrategy.mqh"
 
 //+------------------------------------------------------------------+
 //| Input Parameters                                                  |
@@ -27,27 +35,42 @@ input double   Inp_BaseRisk          = 0.5;      // Base Risk per Position (%)
 input double   Inp_MaxRisk           = 3.0;      // Maximum Total Risk (%)
 input int      Inp_Magic             = 789456;   // Magic Number
 
-// === QUANTUM SCALPER SETTINGS ===
-input group "=== Quantum Scalper Settings ==="
-input int      Inp_QuantumAnalyses   = 5;        // Number of Quantum Analyses per Tick
+// === POSITION SETTINGS ===
+input group "=== Position Settings ==="
 input int      Inp_MaxPositions      = 3;        // Maximum Simultaneous Positions
 input double   Inp_MinTPPips         = 5.0;      // Minimum TP (pips)
 input double   Inp_MaxTPPips         = 30.0;     // Maximum TP (pips)
 input double   Inp_MinSLPips         = 3.0;      // Minimum SL (pips)
 input double   Inp_MaxSLPips         = 20.0;     // Maximum SL (pips)
+
+// === TRAILING SETTINGS ===
+input group "=== Trailing Stop Settings ==="
 input bool     Inp_UseTrailing       = true;     // Use Trailing Stop
-input double   Inp_TrailStepPips     = 2.0;      // Trail Step (pips)
+input double   Inp_TrailActivation   = 70.0;     // Trail Activation (% of TP)
+input double   Inp_TrailBuffer       = 30.0;     // Trail Buffer (% of gains)
+input double   Inp_MinTrailStep      = 3.0;      // Minimum Trail Step (pips)
+
+// === STRATEGY SETTINGS ===
+input group "=== Strategy Settings ==="
+input bool     Inp_UseMABreakout     = true;     // Use MA Breakout Strategy
+input bool     Inp_UseRSIDivergence  = true;     // Use RSI Divergence Strategy
+input bool     Inp_UseBBFade         = true;     // Use BB Fade Strategy
+input bool     Inp_UseMACDAccel      = true;     // Use MACD Acceleration Strategy
+input bool     Inp_UseSessionBreak   = true;     // Use Session Breakout Strategy
+input bool     Inp_UseCandlePattern  = true;     // Use Candle Pattern Strategy
+input double   Inp_SignalThreshold   = 0.65;     // Signal Validity Threshold
+input int      Inp_MaxSignalsPerTick = 3;        // Max Signals to Process per Tick
+
+// === RECOVERY SETTINGS ===
+input group "=== Recovery Settings ==="
+input bool     Inp_UseRecovery       = true;     // Use Per-Position Recovery
+input double   Inp_HedgeAtLossPips   = 15.0;     // Hedge When Loss Exceeds (pips)
+input double   Inp_HedgeLotRatio     = 0.5;      // Hedge Lot Ratio
 
 // === MARKET REGIME SETTINGS ===
 input group "=== Market Regime Settings ==="
 input bool     Inp_AdaptToRegime     = true;     // Adapt to Market Regime
 input ENUM_TIMEFRAMES Inp_RegimeTF   = PERIOD_M5; // Regime Detection Timeframe
-
-// === RECOVERY SETTINGS ===
-input group "=== Recovery Settings ==="
-input bool     Inp_UseRecovery       = true;     // Use Recovery After Losses
-input int      Inp_LossesForRecovery = 3;        // Losses to Trigger Recovery
-input bool     Inp_UseHedging        = true;     // Use Hedging in Recovery
 
 // === SELF-OPTIMIZATION ===
 input group "=== Self-Optimization ==="
@@ -65,13 +88,14 @@ input int      Inp_MinBarsBetween    = 1;        // Min Bars Between Positions
 //+------------------------------------------------------------------+
 
 CPersistentMemory* g_memory = NULL;
-CMarketRegime* g_regime = NULL;
-CPositionManager* g_posManager = NULL;
+CRegimeDetector* g_regimeDetector = NULL;
+CSignalGrid* g_signalGrid = NULL;
+CEnhancedPositionManager* g_posManager = NULL;
 CPerformanceTracker* g_perfTracker = NULL;
-CQuantumScalper* g_quantum = NULL;
 
 datetime g_lastBarTime = 0;
 int g_barsSinceLastTrade = 0;
+datetime g_lastRegimeUpdate = 0;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                    |
@@ -85,33 +109,105 @@ int OnInit()
       Print("Starting with fresh memory");
    }
    
-   // Initialize market regime detector
-   g_regime = new CMarketRegime(Inp_RegimeTF);
+   // Initialize regime detector
+   g_regimeDetector = new CRegimeDetector();
+   if(!g_regimeDetector.Init(_Symbol, Inp_RegimeTF))
+   {
+      Print("ERROR: Failed to initialize regime detector");
+      return INIT_FAILED;
+   }
    
-   // Initialize position manager
-   g_posManager = new CPositionManager(_Symbol, Inp_MaxPositions);
+   // Initialize signal grid
+   g_signalGrid = new CSignalGrid();
+   g_signalGrid.SetThreshold(Inp_SignalThreshold);
+   g_signalGrid.SetMaxSignals(Inp_MaxSignalsPerTick);
+   
+   // Register strategies
+   if(Inp_UseMABreakout)
+   {
+      CMABreakoutStrategy* strategy = new CMABreakoutStrategy();
+      if(strategy.Init(_Symbol, Inp_RegimeTF))
+         g_signalGrid.AddStrategy(strategy);
+      else
+         delete strategy;
+   }
+   
+   if(Inp_UseRSIDivergence)
+   {
+      CRSIDivergenceStrategy* strategy = new CRSIDivergenceStrategy();
+      if(strategy.Init(_Symbol, Inp_RegimeTF))
+         g_signalGrid.AddStrategy(strategy);
+      else
+         delete strategy;
+   }
+   
+   if(Inp_UseBBFade)
+   {
+      CBBFadeStrategy* strategy = new CBBFadeStrategy();
+      if(strategy.Init(_Symbol, Inp_RegimeTF))
+         g_signalGrid.AddStrategy(strategy);
+      else
+         delete strategy;
+   }
+   
+   if(Inp_UseMACDAccel)
+   {
+      CMACDAccelerationStrategy* strategy = new CMACDAccelerationStrategy();
+      if(strategy.Init(_Symbol, Inp_RegimeTF))
+         g_signalGrid.AddStrategy(strategy);
+      else
+         delete strategy;
+   }
+   
+   if(Inp_UseSessionBreak)
+   {
+      CSessionBreakoutStrategy* strategy = new CSessionBreakoutStrategy();
+      if(strategy.Init(_Symbol, Inp_RegimeTF))
+         g_signalGrid.AddStrategy(strategy);
+      else
+         delete strategy;
+   }
+   
+   if(Inp_UseCandlePattern)
+   {
+      CCandlePatternStrategy* strategy = new CCandlePatternStrategy();
+      if(strategy.Init(_Symbol, Inp_RegimeTF))
+         g_signalGrid.AddStrategy(strategy);
+      else
+         delete strategy;
+   }
+   
+   Print("Registered ", g_signalGrid.GetStrategyCount(), " strategies");
+   
+   // Initialize enhanced position manager
+   g_posManager = new CEnhancedPositionManager(_Symbol, Inp_MaxPositions);
    g_posManager.SetTPSLRanges(Inp_MinTPPips, Inp_MaxTPPips, Inp_MinSLPips, Inp_MaxSLPips);
+   g_posManager.SetTrailingConfig(Inp_TrailActivation / 100.0, 
+                                   Inp_TrailBuffer / 100.0, 
+                                   Inp_MinTrailStep);
    
    // Initialize performance tracker
    g_perfTracker = new CPerformanceTracker(g_memory);
    
-   // Initialize quantum scalper
-   g_quantum = new CQuantumScalper();
-   if(!g_quantum.Init())
-   {
-      Print("Failed to initialize quantum scalper");
-      return INIT_FAILED;
-   }
+   // Display initialization info
+   PerformanceMetrics metrics;
+   g_memory.GetMetrics(metrics);
    
-   // Display startup information
    Print("╔════════════════════════════════════════════════════════════════╗");
-   Print("║        AMAZON RFO QUANTUM SCALPER - INITIALIZED               ║");
+   Print("║        AMAZON RFO QUANTUM SCALPER V2 - INITIALIZED            ║");
    Print("╠════════════════════════════════════════════════════════════════╣");
    Print("║ Symbol: ", _Symbol, " | Magic: ", Inp_Magic);
-   Print("║ Max Positions: ", Inp_MaxPositions, " | Quantum Analyses: ", Inp_QuantumAnalyses);
+   Print("║ Max Positions: ", Inp_MaxPositions, " | Strategies: ", g_signalGrid.GetStrategyCount());
+   Print("║ Trailing: ", (Inp_UseTrailing ? "ON" : "OFF"), 
+         " (Activate: ", Inp_TrailActivation, "%, Buffer: ", Inp_TrailBuffer, "%)");
    Print("║ Self-Optimization: ", (Inp_SelfOptimize ? "ENABLED" : "DISABLED"));
-   Print("║ ", g_perfTracker.GetPerformanceSummary());
+   Print("║ Trades: ", metrics.totalTrades, 
+         " | WR: ", DoubleToString(metrics.winRate, 1), "%", 
+         " | PF: ", DoubleToString(metrics.profitFactor, 2),
+         " | Profit: ", DoubleToString(metrics.totalProfit, 2));
    Print("╚════════════════════════════════════════════════════════════════╝");
+   
+   EventSetTimer(300); // Save memory every 5 minutes
    
    return INIT_SUCCEEDED;
 }
@@ -121,6 +217,8 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   EventKillTimer();
+   
    // Save persistent memory
    if(g_memory != NULL)
    {
@@ -130,13 +228,13 @@ void OnDeinit(const int reason)
    }
    
    // Clean up objects
-   if(g_regime != NULL) delete g_regime;
+   if(g_regimeDetector != NULL) delete g_regimeDetector;
+   if(g_signalGrid != NULL) delete g_signalGrid;
    if(g_posManager != NULL) delete g_posManager;
    if(g_perfTracker != NULL) delete g_perfTracker;
-   if(g_quantum != NULL) delete g_quantum;
    
    Print("╔════════════════════════════════════════════════════════════════╗");
-   Print("║        AMAZON RFO QUANTUM SCALPER - SHUTDOWN                  ║");
+   Print("║        AMAZON RFO QUANTUM SCALPER V2 - SHUTDOWN               ║");
    Print("╚════════════════════════════════════════════════════════════════╝");
 }
 
@@ -158,116 +256,120 @@ void OnTick()
       g_barsSinceLastTrade++;
    }
    
-   // Update position manager and trail stops
+   // === POSITION MANAGEMENT ===
+   
+   // Trail stops on existing positions
    if(Inp_UseTrailing)
       g_posManager.TrailAllPositions();
+   
+   // Per-position recovery (hedge losing positions)
+   if(Inp_UseRecovery)
+   {
+      int losingIndices[];
+      double lossPips[];
+      g_posManager.GetLosingPositions(losingIndices, lossPips);
+      
+      for(int i = 0; i < ArraySize(losingIndices); i++)
+      {
+         if(lossPips[i] > Inp_HedgeAtLossPips)
+         {
+            g_posManager.HedgePosition(losingIndices[i], Inp_HedgeLotRatio);
+         }
+      }
+   }
+   
+   // === ENTRY LOGIC ===
    
    // Check if can open new positions
    if(!g_posManager.CanOpenPosition()) return;
    if(g_barsSinceLastTrade < Inp_MinBarsBetween) return;
    
-   // === MARKET REGIME DETECTION ===
-   double regimeStrength = 0;
-   ENUM_MARKET_REGIME currentRegime = g_regime.DetectRegime(regimeStrength);
-   
-   // Update regime in memory
-   RegimeMemory regimeMem;
-   g_memory.GetRegime(regimeMem);
-   regimeMem.currentRegime = currentRegime;
-   regimeMem.regimeStrength = regimeStrength;
-   g_memory.SetRegime(regimeMem);
-   
-   // Get regime-adapted parameters
-   double regimeTPMult, regimeSLMult, regimeAggr;
-   int regimeMaxPos;
-   g_regime.GetRegimeParameters(currentRegime, regimeTPMult, regimeSLMult, regimeMaxPos, regimeAggr);
-   
-   if(Inp_AdaptToRegime)
+   // Update regime periodically (every 15 minutes)
+   datetime currentTime = TimeCurrent();
+   if(currentTime - g_lastRegimeUpdate >= 900) // 15 minutes
    {
-      g_posManager.SetMaxPositions(regimeMaxPos);
+      g_lastRegimeUpdate = currentTime;
+      g_regimeDetector.UpdateRegime();
+      
+      ENUM_MARKET_REGIME regime = g_regimeDetector.GetCurrentRegime();
+      Print("♦ Regime updated: ", g_regimeDetector.GetRegimeName(regime));
    }
    
-   // Check entry timing based on regime
-   if(!g_regime.IsGoodEntryTiming(currentRegime)) return;
+   // Get current regime
+   ENUM_MARKET_REGIME currentRegime = g_regimeDetector.GetCurrentRegime();
    
-   // === QUANTUM ANALYSIS ===
-   QuantumAnalysis analyses[];
-   g_quantum.PerformQuantumAnalysis(analyses, Inp_QuantumAnalyses);
+   // Analyze all strategies and get signals
+   TradingSignal signals[];
+   g_signalGrid.AnalyzeMarket(currentRegime, signals);
    
-   // Get consensus from quantum analyses
-   double consensusSignal, consensusConfidence;
-   bool shouldTrade;
-   g_quantum.GetConsensus(analyses, consensusSignal, consensusConfidence, shouldTrade);
+   if(ArraySize(signals) == 0) return; // No valid signals
    
-   if(!shouldTrade) return;
+   // Process top signals (up to max per tick)
+   int signalsToProcess = MathMin(ArraySize(signals), Inp_MaxSignalsPerTick);
+   int signalsProcessed = 0;
    
-   // === RECOVERY STRATEGY ===
-   int consecutiveLosses = g_memory.GetConsecutiveLosses();
-   double riskReduction = 1.0;
-   double tpIncrease = 1.0;
-   bool useHedge = false;
-   
-   if(Inp_UseRecovery && consecutiveLosses >= Inp_LossesForRecovery)
+   for(int i = 0; i < signalsToProcess && signalsProcessed < signalsToProcess; i++)
    {
-      g_regime.GetRecoveryStrategy(consecutiveLosses, riskReduction, tpIncrease, useHedge);
-      Print("♦ Recovery mode active: Losses=", consecutiveLosses, 
-            " RiskRed=", DoubleToString(riskReduction, 2),
-            " TPInc=", DoubleToString(tpIncrease, 2));
+      if(!g_posManager.CanOpenPosition()) break;
       
-      // Apply hedging if needed
-      if(useHedge && Inp_UseHedging)
+      TradingSignal signal = signals[i];
+      
+      // Calculate lot size with margin awareness
+      double lots = CalculateLotSize(signal.slPips);
+      if(lots <= 0) continue;
+      
+      // Open position
+      bool success = g_posManager.OpenPosition(signal.direction, 
+                                                lots, 
+                                                signal.tpPips, 
+                                                signal.slPips, 
+                                                signal.strategyID,
+                                                signal.justification);
+      
+      if(success)
       {
-         double hedgeLots = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-         g_posManager.HedgePositions(hedgeLots);
+         g_barsSinceLastTrade = 0;
+         signalsProcessed++;
+         
+         Print("✓ Signal ", i+1, "/", ArraySize(signals), 
+               " Score: ", DoubleToString(signal.score, 2),
+               " | Regime: ", g_regimeDetector.GetRegimeName(currentRegime));
       }
    }
-   
-   // === GET ADAPTIVE PARAMETERS ===
+}
+
+//+------------------------------------------------------------------+
+//| Calculate lot size with margin awareness                          |
+//+------------------------------------------------------------------+
+double CalculateLotSize(double slPips)
+{
+   // Get adaptive parameters
    AdaptiveParameters adaptParams;
    g_memory.GetParameters(adaptParams);
    
-   // Determine trade direction first (needed for margin calculation)
-   int tradeType = -1;
-   if(consensusSignal > 0)
-      tradeType = ORDER_TYPE_BUY;
-   else if(consensusSignal < 0)
-      tradeType = ORDER_TYPE_SELL;
-   
-   if(tradeType < 0) return; // No valid signal
-   
-   // Calculate final TP/SL
-   double volatility = analyses[0].volatility; // Use first analysis volatility
-   double tpPips, slPips;
-   g_posManager.CalculateDynamicTPSL(volatility, 
-                                    regimeTPMult * adaptParams.tpMultiplier * tpIncrease,
-                                    regimeSLMult * adaptParams.slMultiplier,
-                                    tpPips, slPips);
-   
-   // Calculate lot size with margin awareness
-   double riskPct = Inp_BaseRisk * adaptParams.riskLevel * riskReduction;
-   
-   // Get current open positions count
+   // Get number of open positions
    int openPositions = g_posManager.GetPositionCount();
    
-   // Adjust risk based on open positions to prevent margin exhaustion
+   // Calculate risk percentage with position scaling
+   double riskPct = Inp_BaseRisk * adaptParams.riskLevel;
+   
+   // Reduce risk as positions increase
    if(openPositions > 0)
    {
-      // Reduce risk per position as more positions open
       double positionFactor = 1.0 / (1.0 + openPositions * 0.3);
       riskPct *= positionFactor;
    }
    
-   // Absolute limit per position considering max positions
+   // Absolute limit per position
    double maxRiskPerPos = Inp_MaxRisk / MathMax(Inp_MaxPositions, 3);
    riskPct = MathMin(riskPct, maxRiskPerPos);
    
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   // Calculate based on equity
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-   
-   // Use equity instead of balance for more realistic risk calculation
    double riskAmount = equity * riskPct / 100.0;
    
+   // Calculate lot size
    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
@@ -275,42 +377,38 @@ void OnTick()
    double lots = 0;
    if(tickValue > 0 && tickSize > 0 && point > 0 && slPips > 0)
    {
-      // Calculate lots based on risk
       lots = riskAmount / (slPips * 10 * point * tickValue / tickSize);
       lots *= adaptParams.lotMultiplier;
       
+      // Get lot constraints
       double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
       double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
       double stepLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
       
-      // Check margin requirement for this lot size
-      double price = (tradeType == ORDER_TYPE_BUY) ? 
-                     SymbolInfoDouble(_Symbol, SYMBOL_ASK) : 
-                     SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      
+      // Check margin requirement
+      double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Use ASK for calculation
       double marginRequired = 0;
-      if(OrderCalcMargin(tradeType == ORDER_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-                        _Symbol, lots, price, marginRequired))
+      
+      if(OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, lots, price, marginRequired))
       {
          // Ensure we have enough free margin (keep 30% buffer)
          double maxAffordable = freeMargin * 0.7;
          if(marginRequired > maxAffordable && maxAffordable > 0)
          {
-            // Reduce lot size to fit available margin
             lots = lots * (maxAffordable / marginRequired);
          }
       }
       
+      // Round to valid lot size
       if(stepLot > 0)
          lots = MathFloor(lots / stepLot) * stepLot;
       
       lots = MathMax(minLot, MathMin(maxLot, lots));
       
-      // Final margin check
-      if(OrderCalcMargin(tradeType == ORDER_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-                        _Symbol, lots, price, marginRequired))
+      // Final margin safety check
+      if(OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, lots, price, marginRequired))
       {
-         if(marginRequired > freeMargin * 0.8) // Don't use more than 80% of free margin
+         if(marginRequired > freeMargin * 0.8)
          {
             lots = minLot; // Fallback to minimum
          }
@@ -321,23 +419,7 @@ void OnTick()
       lots = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    }
    
-   // === OPEN POSITION ===
-   string comment = StringFormat("QS_%s_C%.2f", 
-                                 g_regime.GetRegimeName(currentRegime),
-                                 consensusConfidence);
-   
-   bool success = g_posManager.OpenPosition(tradeType, lots, tpPips, slPips, comment);
-   
-   if(success)
-   {
-      g_barsSinceLastTrade = 0;
-      Print("✓ Position opened: ", (tradeType == ORDER_TYPE_BUY ? "BUY" : "SELL"),
-            " | Lots: ", DoubleToString(lots, 2),
-            " | TP: ", DoubleToString(tpPips, 1), " pips",
-            " | SL: ", DoubleToString(slPips, 1), " pips",
-            " | Conf: ", DoubleToString(consensusConfidence, 2),
-            " | Regime: ", g_regime.GetRegimeName(currentRegime));
-   }
+   return lots;
 }
 
 //+------------------------------------------------------------------+
@@ -361,9 +443,16 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             // Record in performance tracker
             g_perfTracker.RecordTrade(profit, isWin);
             
+            // Get performance summary
+            PerformanceMetrics metrics;
+            g_memory.GetMetrics(metrics);
+            
             Print((isWin ? "✓ WIN: " : "✗ LOSS: "), 
-                  DoubleToString(profit, 2), " | ",
-                  g_perfTracker.GetPerformanceSummary());
+                  DoubleToString(profit, 2), 
+                  " | Trades: ", metrics.totalTrades,
+                  " | WR: ", DoubleToString(metrics.winRate, 1), "%",
+                  " | PF: ", DoubleToString(metrics.profitFactor, 2),
+                  " | Profit: ", DoubleToString(metrics.totalProfit, 2));
          }
       }
    }
